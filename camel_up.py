@@ -311,7 +311,6 @@ class outcome_analyser:
 
 # ====================================================================================================
 
-
 class game_and_analysis:
   def __init__(this, total_camels=5, min_die=1, max_die=3, total_spaces=16, sep_length=70 ):
     this.total_camels = total_camels
@@ -345,7 +344,7 @@ class game_and_analysis:
     positional_probability = analysis.collect_all_round_positional_ordering_probabilities()
     print("position:", end="")
     for camel in range(this.total_camels):
-      print(f"\t{camel}", end="")
+      print(f"\t{camel+1}", end="")
     for camel in range(this.total_camels):
       print( f"\ncamel {camel}:", end="" )
       for position in range(this.total_camels):
@@ -454,11 +453,11 @@ def main():
   parser.add_argument('--minimum_die_value', type=int,  default=1,                          help='Minimum die value (default: 1)')
   parser.add_argument('--maximum_die_value', type=int,  default=3,                          help='Maximum die value (default: 3)')
   parser.add_argument('--total_spaces',      type=int,  default=16,                         help='Total spaces on board (default: 16)')
-  parser.add_argument('--interactive_mode',             default=False, action="store_true", help='Set simulation to interactive mode.')
+  parser.add_argument('--interactive',                  default=False, action="store_true", help='Run simulation in interactive mode (plays random game by default)')
 
   args = parser.parse_args( )
 
-  if args.interactive_mode:
+  if args.interactive:
     game = interactive_game_and_analysis(total_camels=args.camels, min_die=args.minimum_die_value, max_die=args.maximum_die_value, total_spaces=args.total_spaces)
   else:
     game = random_game_and_analysis(total_camels=args.camels, min_die=args.minimum_die_value, max_die=args.maximum_die_value, total_spaces=args.total_spaces)
