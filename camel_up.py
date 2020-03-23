@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import random, copy, argparse
+import random, copy, argparse, os
+import multiprocessing as mp
 from functools import reduce
 from pprint import pprint
 
@@ -201,7 +202,7 @@ class game_runner:
 # ====================================================================================================
 
 class outcome_analyser:
-  def __init__(this, game_runner):
+  def __init__(this, game_runner, parallel=False, jobs=os.cpu_count()):
     this.game_runner = game_runner
     this.collect_all_single_moves_result = None
     this.collect_all_single_move_outcomes_result = None
@@ -209,9 +210,11 @@ class outcome_analyser:
     this.collect_all_round_outcome_probabilities_result = None
     this.collect_all_round_ordering_probabilities_result = None
     this.collect_all_round_positional_ordering_probabilities_result = None
+    this.parallel=parallel
+    this.jobs=jobs
 
   def copy(this):
-    analyser = outcome_analyser( this.game_runner.copy() )
+    analyser = outcome_analyser( this.game_runner.copy(), this.parallel, this.jobs )
     analyser.collect_all_single_moves_result = this.collect_all_single_moves_result
     analyser.collect_all_single_move_outcomes_result = this.collect_all_single_move_outcomes_result
     analyser.collect_all_round_outcomes_result = this.collect_all_round_outcomes_result
@@ -247,6 +250,14 @@ class outcome_analyser:
 
   def collect_all_round_outcomes(this):
     if this.collect_all_round_outcomes_result == None:
+      if this.parallel:
+        this.collect_all_round_outcomes_parallel()
+      else:
+        this.collect_all_round_outcomes_serial()
+    return this.collect_all_round_outcomes_result
+
+  def collect_all_round_outcomes_serial(this):
+    if this.collect_all_round_outcomes_result == None:
       # [ (game_runner, moves) ]
       work_list = [ (this.game_runner, []) ]
       # game_runner => [[(camel, spaces), ...], ...]
@@ -256,7 +267,7 @@ class outcome_analyser:
         for (camel, spaces) in outcome_analyser(game).collect_all_single_moves():
           outcome = game.move( camel, spaces, auto_restart_round=False )
           new_moves = moves + [(camel, spaces)]
-          # game's round is done, put in resultins
+          # game's round is done, put in result
           if outcome.round_over():
             if outcome not in outcomes:
               outcomes[outcome] = []
@@ -267,6 +278,53 @@ class outcome_analyser:
             work_list.append( (outcome, new_moves) )
       this.collect_all_round_outcomes_result = outcomes
     return this.collect_all_round_outcomes_result
+
+  def collect_all_round_outcomes_parallel_helper_function( game_moves_tuple ):
+    game = game_moves_tuple[0]
+    moves = game_moves_tuple[1]
+    analyser = outcome_analyser(game)
+    outcomes = analyser.collect_all_round_outcomes()
+    return outcomes
+
+  def collect_all_round_outcomes_parallel(this):
+    if this.collect_all_round_outcomes_result == None:
+      initial_work_list = []
+      outcomes = {}
+      for (camel, spaces) in outcome_analyser(this.game_runner).collect_all_single_moves():
+        outcome = this.game_runner.move( camel, spaces, auto_restart_round=False )
+        new_moves = [(camel, spaces)]
+        # game's round is done, put in result
+        # Note that we do this here, because it's possible that a round is done
+        # and that the outcomes does not result in more work, so parallelism
+        # would just be overhead
+        if outcome.round_over():
+          if outcome not in outcomes:
+            outcomes[outcome] = []
+          # add new move list to existing move set
+          outcomes[outcome].append( new_moves )
+        else:
+          # push this work onto the work list
+          initial_work_list.append( (outcome, new_moves) )
+      # spawn remaining work to the pool
+      if len(initial_work_list) > 0:
+        # Farm initial work out to worker pool
+        with mp.Pool(processes=this.jobs) as pool:
+          def parallel_helper_function( game_moves_tuple ):
+            game = game_moves_tuple[0]
+            moves = game_moves_tuple[1]
+            analyser = outcome_analyser(game)
+            outcomes = analyser.collect_all_round_outcomes()
+            return outcomes
+          results = pool.map(outcome_analyser.collect_all_round_outcomes_parallel_helper_function, initial_work_list)
+          for collection in results:
+            for outcome, moves in collection.items():
+              if outcome not in outcomes:
+                outcomes[outcome] = []
+              # add new move list to existing move set
+              outcomes[outcome].append( moves )
+      this.collect_all_round_outcomes_result = outcomes
+    return this.collect_all_round_outcomes_result
+
 
   def collect_all_round_outcome_probabilities(this):
     if this.collect_all_round_outcome_probabilities_result == None:
@@ -279,7 +337,7 @@ class outcome_analyser:
                                       }
                               for (game, move_list) in outcomes.items()
                            }
-    this.collect_all_round_outcome_probabilities_result = board_probabilities
+      this.collect_all_round_outcome_probabilities_result = board_probabilities
     return this.collect_all_round_outcome_probabilities_result
 
   def collect_all_round_ordering_probabilities(this):
@@ -312,7 +370,7 @@ class outcome_analyser:
 # ====================================================================================================
 
 class game_and_analysis:
-  def __init__(this, total_camels=5, min_die=1, max_die=3, total_spaces=16, sep_length=70 ):
+  def __init__(this, total_camels=5, min_die=1, max_die=3, total_spaces=16, sep_length=70, parallel=False, jobs=os.cpu_count() ):
     this.total_camels = total_camels
     this.min_die = min_die
     this.max_die = max_die
@@ -326,6 +384,9 @@ class game_and_analysis:
     this.move_sep = "=" * sep_length
     this.section_sep = "-" * sep_length
 
+    this.parallel = parallel
+    this.jobs = jobs
+
   def run(this):
     while not this.game.game_completed():
       this.step()
@@ -335,7 +396,7 @@ class game_and_analysis:
      print( f"Round {this.round_counter} move {this.move_counter}\nRace order: {this.game.game_state.board.race_order()}\n{this.game}\n{this.section_sep}\nProbabilities:")
 
   def do_analysis(this):
-    analyser = outcome_analyser( this.game )
+    analyser = outcome_analyser( this.game, parallel=this.parallel, jobs=this.jobs )
     analyser.collect_all_round_positional_ordering_probabilities()
     return analyser
 
@@ -449,18 +510,19 @@ class interactive_game_and_analysis(game_and_analysis):
 
 def main():
   parser = argparse.ArgumentParser(description='Camel Up Simulator')
-  parser.add_argument('--camels',            type=int,  default=5,                          help='Number of camels in the race (default: 3)')
-  parser.add_argument('--minimum_die_value', type=int,  default=1,                          help='Minimum die value (default: 1)')
-  parser.add_argument('--maximum_die_value', type=int,  default=3,                          help='Maximum die value (default: 3)')
-  parser.add_argument('--total_spaces',      type=int,  default=16,                         help='Total spaces on board (default: 16)')
-  parser.add_argument('--interactive',                  default=False, action="store_true", help='Run simulation in interactive mode (plays random game by default)')
+  parser.add_argument("--camels",            type=int,  default=5,                          help="Number of camels in the race (default: 3)")
+  parser.add_argument("--minimum_die_value", type=int,  default=1,                          help="Minimum die value (default: 1)")
+  parser.add_argument("--maximum_die_value", type=int,  default=3,                          help="Maximum die value (default: 3)")
+  parser.add_argument("--total_spaces",      type=int,  default=16,                         help="Total spaces on board (default: 16)")
+  parser.add_argument("--interactive",                  default=False, action="store_true", help="Run simulation in interactive mode (plays random game by default)")
+  parser.add_argument("--jobs",              type=int,  default=os.cpu_count(),             help=f'Number of jobs available in parallel sections (default: {os.cpu_count()}, as determined by `os.cpu_count()`)')
 
   args = parser.parse_args( )
 
   if args.interactive:
-    game = interactive_game_and_analysis(total_camels=args.camels, min_die=args.minimum_die_value, max_die=args.maximum_die_value, total_spaces=args.total_spaces)
+    game = interactive_game_and_analysis(total_camels=args.camels, min_die=args.minimum_die_value, max_die=args.maximum_die_value, total_spaces=args.total_spaces, parallel=(args.jobs > 1), jobs=args.jobs)
   else:
-    game = random_game_and_analysis(total_camels=args.camels, min_die=args.minimum_die_value, max_die=args.maximum_die_value, total_spaces=args.total_spaces)
+    game = random_game_and_analysis(total_camels=args.camels, min_die=args.minimum_die_value, max_die=args.maximum_die_value, total_spaces=args.total_spaces, parallel=(args.jobs > 1), jobs=args.jobs)
 
   game.run()
 
