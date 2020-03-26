@@ -257,6 +257,14 @@ class outcome_analyser:
     return this.collect_all_round_outcomes_result
 
   def collect_all_round_outcomes_serial(this):
+    # note: below is the complexity of this approach
+    # def num_outcomes(c, m):
+    #   if c == 1:
+    #     return m
+    #   else:
+    #     return (num_outcomes(c-1, m) + 1) * m * c
+    # It is significant.
+
     if this.collect_all_round_outcomes_result == None:
       # [ (game_runner, moves) ]
       work_list = [ (this.game_runner, []) ]
